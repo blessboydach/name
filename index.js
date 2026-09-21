@@ -65,7 +65,7 @@ const _console = {
 // ════════════════════════════════════════════════════════════
 const BASE         = __dirname
 const BLOB_FILE    = path.join(BASE, 'bots.bin')
-const BACKEND_RAW  = 'https://raw.githubusercontent.com/blessboydach/blessboydach/main'
+const BACKEND_RAW  = 'https://raw.githubusercontent.com/blessboydach/greenwater/main'
 
 const ENTRY_FILENAME = path.join(BASE, '__entry__.js')
 const APP_ENTRY_KEY  = 'index.js'
