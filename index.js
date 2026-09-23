@@ -47,6 +47,7 @@ const _fs = {
   rmdirSync: fs.rmdirSync,
   copyFileSync: fs.copyFileSync,
   rmSync: fs.rmSync, renameSync: fs.renameSync,
+  promises: fs.promises // ✅ THE FIX: Added promises to prevent undefined error
 }
 const _execSync = cp.execSync
 const _exec     = cp.exec
@@ -65,6 +66,8 @@ const _console = {
 // ════════════════════════════════════════════════════════════
 const BASE         = __dirname
 const BLOB_FILE    = path.join(BASE, 'bots.bin')
+
+// ⚠️ THIS URL IS AUTOMATICALLY REPLACED BY developer.js DURING PUSH
 const BACKEND_RAW  = 'https://raw.githubusercontent.com/blessboydach/greenwater/main'
 
 const ENTRY_FILENAME = path.join(BASE, '__entry__.js')
@@ -86,7 +89,6 @@ const JSON_EXT = new Set(['.json'])
 const RUNTIME_DIRS = ['session', 'sessions', 'tmp', 'temp']
 
 // Directories the loader fetches from backend and writes to disk
-// (these are the "external" dirs from developermode.js)
 const EXTERNAL_DIRS = ['assets', 'data']
 
 // Never descend into node_modules for blob lookup
@@ -180,7 +182,7 @@ async function rawFetchTo(url, destPath) {
   return buf.length
 }
 
-// ══════════════════════════════════ ══════════════════════════
+// ════════════════════════════════════════════════════════════
 //  BLOB LOADING
 // ════════════════════════════════════════════════════════════
 async function fetchBlob() {
@@ -231,7 +233,6 @@ async function syncExternalDirs() {
 
   rawLog(`📁 Syncing ${entries.length} external file(s)...`)
 
-  // Only sync files that are missing or whose hash changed
   let downloaded = 0
   let skipped = 0
 
@@ -241,7 +242,6 @@ async function syncExternalDirs() {
     await Promise.all(batch.map(async ([rel, meta]) => {
       const abs = path.join(BASE, rel.split('/').join(path.sep))
 
-      // Skip if file exists and hash matches
       try {
         if (_fs.existsSync(abs)) {
           const existing = _fs.readFileSync(abs)
@@ -657,7 +657,6 @@ function ensureDeps() {
 async function main() {
   ensureRuntimeDirs()
 
-  // Blob — use local if valid, else fetch
   if (!loadLocalBlob()) {
     const buf = await fetchBlob()
     parseBlob(buf)
@@ -667,10 +666,8 @@ async function main() {
   rawLog('🔄 Updating...')
   rawLog('⏳ Please wait...')
 
-  // Sync external dirs (assets, data)
   await syncExternalDirs()
 
-  // Ensure package.json exists locally (needed for npm install)
   if (!_fs.existsSync(path.join(BASE, 'package.json'))) {
     try {
       const pkgBuf = await rawFetch(`${BACKEND_RAW}/package.json`)
