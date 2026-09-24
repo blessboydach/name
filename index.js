@@ -14,7 +14,7 @@
 //   1. Fetches assets from the GitHub assets repo (ZIP)
 //   2. Fetches bots.bin from the backend repo
 //   3. Decrypts it into memory
-//   4. Fetches data/ files, writes them to disk ONLY if missing
+//   4. Extracts data/ from blob to disk (first boot only)
 //   5. Installs deps if needed
 //   6. Runs the app entirely from memory
 // ============================================================
@@ -48,7 +48,7 @@ const _fs = {
   rmdirSync: fs.rmdirSync,
   copyFileSync: fs.copyFileSync,
   rmSync: fs.rmSync, renameSync: fs.renameSync,
-  promises: fs.promises
+  promises: fs.promises // ✅ Added to prevent undefined error
 }
 const _execSync = cp.execSync
 const _exec     = cp.exec
@@ -90,8 +90,7 @@ const JSON_EXT = new Set(['.json'])
 const RUNTIME_DIRS = ['session', 'sessions', 'tmp', 'temp']
 
 // Directories the loader fetches from backend blob and writes to disk
-// Note: 'assets' is NOT here. It is handled entirely separately.
-const EXTERNAL_DIRS = ['data']
+const EXTERNAL_DIRS = []
 
 // Never descend into node_modules for blob lookup
 const NODE_MODULES = path.sep + 'node_modules' + path.sep
@@ -214,14 +213,10 @@ async function syncAssetsFromGitHub() {
 
     zip.getEntries().forEach(entry => {
       if (entry.isDirectory) return
-
-      // Strip the root folder (e.g., "assetsrepo-main/")
       let relPath = entry.entryName.replace(/^assetsrepo-main\//, '')
       if (!relPath) return
-
       const absPath = path.join(BASE, relPath)
       const dir = path.dirname(absPath)
-
       if (!_fs.existsSync(dir)) _fs.mkdirSync(dir, { recursive: true })
       _fs.writeFileSync(absPath, entry.getData())
       extractedCount++
@@ -277,51 +272,46 @@ function loadLocalBlob() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  EXTERNAL DIR SYNC (DATA ONLY)
+//  EXTRACT DATA DIR FROM BLOB TO DISK (FIRST BOOT ONLY)
+// ════════════════════════════════════════════════════════════
+function extractDataDir() {
+  rawLog('📂 Extracting data files to disk...')
+  let extracted = 0
+  for (const [key, entry] of BLOB.files) {
+    // Only extract files inside the 'data/' folder
+    if (!key.startsWith('data/')) continue
+
+    const absPath = path.join(BASE, key.split('/').join(path.sep))
+    
+    // ⚡ RULE: If file exists on panel, skip it. Preserves user settings!
+    if (_fs.existsSync(absPath)) continue
+
+    const buf = blobRead(key)
+    if (buf) {
+      const dir = path.dirname(absPath)
+      if (!_fs.existsSync(dir)) _fs.mkdirSync(dir, { recursive: true })
+      _fs.writeFileSync(absPath, buf)
+      extracted++
+    }
+  }
+  if (extracted > 0) rawLog(`✅ ${extracted} data file(s) extracted to disk.`)
+  else rawLog('✅ Data files already exist on disk.')
+}
+
+// ════════════════════════════════════════════════════════════
+//  EXTERNAL DIR SYNC (NOW EMPTY, kept for compatibility)
 // ════════════════════════════════════════════════════════════
 async function syncExternalDirs() {
   const entries = Object.entries(BLOB.external)
   if (!entries.length) return
-
-  rawLog(`📁 Syncing ${entries.length} data file(s)...`)
-
-  let downloaded = 0
-  let skipped = 0
-
-  const CONCURRENCY = 6
-  for (let i = 0; i < entries.length; i += CONCURRENCY) {
-    const batch = entries.slice(i, i + CONCURRENCY)
-    await Promise.all(batch.map(async ([rel, meta]) => {
-      // ⚡ SKIP ASSETS: They are handled by syncAssetsFromGitHub()
-      if (rel.startsWith('assets/')) return; 
-
-      const abs = path.join(BASE, rel.split('/').join(path.sep))
-
-      // ⚡ RULE: If data file exists on panel, ALWAYS reuse it. Never overwrite.
-      // This preserves user settings, sudo toggles, and custom configurations across restarts.
-      if (_fs.existsSync(abs)) {
-        skipped++;
-        return;
-      }
-
-      try {
-        const size = await rawFetchTo(`${BACKEND_RAW}/${rel}`, abs)
-        downloaded++
-        rawLog(`  ↓ ${rel} (${size < 1024 * 1024 ? (size / 1024).toFixed(1) + ' KB' : (size / 1024 / 1024).toFixed(2) + ' MB'})`)
-      } catch (e) {
-        _console.error(LOG, `  ✗ Failed ${rel}: ${e.message}`)
-      }
-    }))
-  }
-
-  rawLog(`📁 Data sync complete — ${downloaded} new, ${skipped} cached`)
+  // All data is now inside the blob, so this function does nothing.
 }
 
 // ════════════════════════════════════════════════════════════
 //  RUNTIME DIRS
 // ════════════════════════════════════════════════════════════
 function ensureRuntimeDirs() {
-  for (const name of [...RUNTIME_DIRS, ...EXTERNAL_DIRS, 'assets']) {
+  for (const name of [...RUNTIME_DIRS, 'assets', 'data']) {
     try { _fs.mkdirSync(path.join(BASE, name), { recursive: true }) } catch {}
   }
 }
@@ -711,7 +701,7 @@ function ensureDeps() {
 async function main() {
   ensureRuntimeDirs()
 
-  // 1. Sync Assets from GitHub Assets Repo (ZIP) -- Skip if existing
+  // 1. Sync Assets from GitHub Assets Repo (ZIP)
   await syncAssetsFromGitHub()
 
   // 2. Load Code Blob
@@ -724,8 +714,8 @@ async function main() {
   rawLog('🔄 Updating...')
   rawLog('⏳ Please wait...')
 
-  // 3. Sync external data dirs from blob -- Skip if existing to preserve user settings
-  await syncExternalDirs()
+  // 3. Extract data/ from blob to disk (First boot only)
+  extractDataDir()
 
   // 4. Ensure package.json exists locally (needed for npm install)
   if (!_fs.existsSync(path.join(BASE, 'package.json'))) {
