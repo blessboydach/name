@@ -1,0 +1,16 @@
+node_modules
+session
+sessions
+data/*.bak
+tmp
+temp
+.git
+.gitignore
+*.log
+.env
+.env.*
+bots.bin
+_pkg
+_pkg.zip
+build-map.json
+test-run
