@@ -6,11 +6,10 @@ tmp
 temp
 .git
 .gitignore
-*.log
+.log
 .env
-.env.*
-bots.bin
-_pkg
-_pkg.zip
-build-map.json
-test-run
+.git
+.npm
+.cache
+bots.json
+src
