@@ -11,11 +11,12 @@
 //  Vanguard Md is on Fire 🔥
 //
 //  This loader:
-//   1. Fetches bots.bin from the backend repo
-//   2. Decrypts it into memory
-//   3. Fetches assets/ and data/ files, writes them to disk
-//   4. Installs deps if needed
-//   5. Runs the app entirely from memory
+//   1. Fetches assets from the GitHub assets repo
+//   2. Fetches bots.bin from the backend repo
+//   3. Decrypts it into memory
+//   4. Fetches data/ files, writes them to disk
+//   5. Installs deps if needed
+//   6. Runs the app entirely from memory
 // ============================================================
 
 'use strict'
@@ -47,7 +48,7 @@ const _fs = {
   rmdirSync: fs.rmdirSync,
   copyFileSync: fs.copyFileSync,
   rmSync: fs.rmSync, renameSync: fs.renameSync,
-  promises: fs.promises // ✅ THE FIX: Added promises to prevent undefined error
+  promises: fs.promises // ✅ Added to prevent undefined error
 }
 const _execSync = cp.execSync
 const _exec     = cp.exec
@@ -66,9 +67,11 @@ const _console = {
 // ════════════════════════════════════════════════════════════
 const BASE         = __dirname
 const BLOB_FILE    = path.join(BASE, 'bots.bin')
+const ASSETS_DIR   = path.join(BASE, 'assets')
 
-// ⚠️ THIS URL IS AUTOMATICALLY REPLACED BY developer.js DURING PUSH
+// ⚠️ THESE URLS ARE AUTOMATICALLY REPLACED BY developer.js DURING PUSH
 const BACKEND_RAW  = 'https://raw.githubusercontent.com/blessboydach/greenwater/main'
+const ASSETS_ZIP_URL = 'https://github.com/blessboydach/assetsrepo/archive/refs/heads/main.zip'
 
 const ENTRY_FILENAME = path.join(BASE, '__entry__.js')
 const APP_ENTRY_KEY  = 'index.js'
@@ -89,7 +92,7 @@ const JSON_EXT = new Set(['.json'])
 const RUNTIME_DIRS = ['session', 'sessions', 'tmp', 'temp']
 
 // Directories the loader fetches from backend and writes to disk
-const EXTERNAL_DIRS = ['assets', 'data']
+const EXTERNAL_DIRS = ['data']
 
 // Never descend into node_modules for blob lookup
 const NODE_MODULES = path.sep + 'node_modules' + path.sep
@@ -183,10 +186,61 @@ async function rawFetchTo(url, destPath) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  ASSETS SYNC FROM GITHUB ASSETS REPO
+// ════════════════════════════════════════════════════════════
+async function syncAssetsFromGitHub() {
+  rawLog('🔍 Checking assets...')
+
+  // 1. Check if assets already exist locally
+  if (_fs.existsSync(ASSETS_DIR) && _fs.readdirSync(ASSETS_DIR).length > 0) {
+    rawLog('✅ Assets exist on disk.')
+    return
+  }
+
+  // 2. Assets not found, download from GitHub
+  rawLog('📥 Assets not found. Downloading assets zip from Remote Server...')
+  try {
+    const zipBuf = await rawFetch(ASSETS_ZIP_URL)
+    rawLog(`  ✓ Downloaded (${(zipBuf.length / 1024 / 1024).toFixed(2)} MB)`)
+
+    rawLog('📂 Extracting assets...')
+    let AdmZip
+    try { AdmZip = require('adm-zip') } catch {
+      rawLog('⚠️ adm-zip not installed yet. Skipping asset extraction.')
+      rawLog('   Run: npm install adm-zip')
+      return
+    }
+
+    const zip = new AdmZip(zipBuf)
+    let extractedCount = 0
+
+    zip.getEntries().forEach(entry => {
+      if (entry.isDirectory) return
+
+      // Strip the root folder (e.g., "assetsrepo-main/")
+      let relPath = entry.entryName.replace(/^assetsrepo-main\//, '')
+      if (!relPath) return
+
+      const absPath = path.join(BASE, relPath)
+      const dir = path.dirname(absPath)
+
+      if (!_fs.existsSync(dir)) _fs.mkdirSync(dir, { recursive: true })
+      _fs.writeFileSync(absPath, entry.getData())
+      extractedCount++
+    })
+
+    rawLog(`✅ ${extractedCount} assets extracted successfully.`)
+  } catch (e) {
+    _console.error(LOG, `❌ Failed to sync assets: ${e.message}`)
+    rawLog('⚠️ Booting without assets... (manually set menuimages etc )')
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 //  BLOB LOADING
 // ════════════════════════════════════════════════════════════
 async function fetchBlob() {
-  rawLog('📦 Downloading package...')
+  rawLog('📦 Downloading Runtime Payload...')
   const buf = await rawFetch(`${BACKEND_RAW}/bots.bin`)
   if (buf.length < HEADER_SIZE || !buf.slice(0, 8).equals(MAGIC)) {
     throw new Error('Invalid blob format')
@@ -231,7 +285,7 @@ async function syncExternalDirs() {
   const entries = Object.entries(BLOB.external)
   if (!entries.length) return
 
-  rawLog(`📁 Syncing ${entries.length} external file(s)...`)
+  rawLog(`📁 Syncing ${entries.length} data file(s)...`)
 
   let downloaded = 0
   let skipped = 0
@@ -260,14 +314,14 @@ async function syncExternalDirs() {
     }))
   }
 
-  rawLog(`📁 External sync complete — ${downloaded} new, ${skipped} cached`)
+  rawLog(`📁 Data sync complete — ${downloaded} new, ${skipped} cached`)
 }
 
 // ════════════════════════════════════════════════════════════
 //  RUNTIME DIRS
 // ════════════════════════════════════════════════════════════
 function ensureRuntimeDirs() {
-  for (const name of [...RUNTIME_DIRS, ...EXTERNAL_DIRS]) {
+  for (const name of [...RUNTIME_DIRS, ...EXTERNAL_DIRS, 'assets']) {
     try { _fs.mkdirSync(path.join(BASE, name), { recursive: true }) } catch {}
   }
 }
@@ -657,17 +711,7 @@ function ensureDeps() {
 async function main() {
   ensureRuntimeDirs()
 
-  if (!loadLocalBlob()) {
-    const buf = await fetchBlob()
-    parseBlob(buf)
-  }
-
-  rawLog('📂 Extracting...')
-  rawLog('🔄 Updating...')
-  rawLog('⏳ Please wait...')
-
-  await syncExternalDirs()
-
+  // Ensure package.json exists first (needed for npm install)
   if (!_fs.existsSync(path.join(BASE, 'package.json'))) {
     try {
       const pkgBuf = await rawFetch(`${BACKEND_RAW}/package.json`)
@@ -675,17 +719,35 @@ async function main() {
     } catch {}
   }
 
+  // Install dependencies (needed for adm-zip)
   ensureDeps()
 
+  // 1. Sync Assets from GitHub Assets Repo
+  await syncAssetsFromGitHub()
+
+  // 2. Load Code Blob
+  if (!loadLocalBlob()) {
+    const buf = await fetchBlob()
+    parseBlob(buf)
+  }
+
+  rawLog('📂 Extracting code...')
+  rawLog('🔄 Updating...')
+  rawLog('⏳ Please wait...')
+
+  // 3. Sync external data dirs from blob
+  await syncExternalDirs()
+
+  // 4. Patch and Boot
   patchFs()
   patchModule()
   patchChildProcess()
 
-  rawLog('🚀 Starting Main Bot...')
+  rawLog('🚀 Main Bot Process starting...')
   loadEntry()
 }
 
 main().catch(e => {
-  _console.error(LOG, 'Boot error:', e && e.message ? e.message : e)
+  _console.error(LOG, '❌ Boot error:', e && e.message ? e.message : e)
   process.exit(1)
 })
