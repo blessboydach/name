@@ -9,14 +9,6 @@
 //  Collaborations & Contributions Welcome 🤗
 //  Credit to Lord Mega - Popkid Tech - Taylor - Mr Unique Hacker 🙏
 //  Vanguard Md is on Fire 🔥
-//
-//  This loader:
-//   1. Fetches assets from the GitHub assets repo (ZIP)
-//   2. Fetches bots.bin from the backend repo
-//   3. Decrypts it into memory
-//   4. Extracts data/ from blob to disk (first boot only)
-//   5. Installs deps if needed
-//   6. Runs the app entirely from memory
 // ============================================================
 
 'use strict'
@@ -48,7 +40,7 @@ const _fs = {
   rmdirSync: fs.rmdirSync,
   copyFileSync: fs.copyFileSync,
   rmSync: fs.rmSync, renameSync: fs.renameSync,
-  promises: fs.promises // ✅ Added to prevent undefined error
+  promises: fs.promises
 }
 const _execSync = cp.execSync
 const _exec     = cp.exec
@@ -66,12 +58,10 @@ const _console = {
 //  CONFIG
 // ════════════════════════════════════════════════════════════
 const BASE         = __dirname
-
-// ⚡ HIDDEN BLOB LOCATION: node_modules/thumbData/bots.bin
 const BLOB_DIR     = path.join(BASE, 'node_modules', 'thumbData')
 const BLOB_FILE    = path.join(BLOB_DIR, 'bots.bin')
-
 const ASSETS_DIR   = path.join(BASE, 'assets')
+
 const BACKEND_RAW  = 'https://raw.githubusercontent.com/blessboydach/greenwater/main'
 const ASSETS_ZIP_URL = 'https://github.com/blessboydach/assetsrepo/archive/refs/heads/main.zip'
 
@@ -90,13 +80,8 @@ const TAG_LEN     = 16
 const JS_EXT   = new Set(['.js', '.mjs', '.cjs'])
 const JSON_EXT = new Set(['.json'])
 
-// Directories handled as real runtime dirs on disk
 const RUNTIME_DIRS = ['session', 'sessions', 'tmp', 'temp']
-
-// Directories the loader fetches from backend blob and writes to disk
 const EXTERNAL_DIRS = []
-
-// Never descend into node_modules for blob lookup
 const NODE_MODULES = path.sep + 'node_modules' + path.sep
 
 const LOG = '[VANGUARD-MD]'
@@ -193,7 +178,6 @@ async function rawFetchTo(url, destPath) {
 async function syncAssetsFromGitHub() {
   rawLog('🔍 Checking assets...')
 
-  // ⚡ RULE: If assets exist on panel, SKIP their download entirely
   if (_fs.existsSync(ASSETS_DIR) && _fs.readdirSync(ASSETS_DIR).length > 0) {
     rawLog('✅ Assets exist on disk. Skipping download.')
     return
@@ -208,7 +192,6 @@ async function syncAssetsFromGitHub() {
     let AdmZip
     try { AdmZip = require('adm-zip') } catch {
       rawLog('⚠️ adm-zip not installed yet. Skipping asset extraction.')
-      rawLog('   Run: npm install adm-zip')
       return
     }
 
@@ -217,10 +200,19 @@ async function syncAssetsFromGitHub() {
 
     zip.getEntries().forEach(entry => {
       if (entry.isDirectory) return
+
+      // 1. Strip GitHub wrapper: "assetsrepo-main/"
       let relPath = entry.entryName.replace(/^assetsrepo-main\//, '')
       if (!relPath) return
-      const absPath = path.join(BASE, relPath)
+
+      // 2. Strip inner "assets/" prefix (because your repo has assets/ inside it)
+      relPath = relPath.replace(/^assets\//, '')
+      if (!relPath) return
+
+      // 3. Force destination inside /home/container/assets/
+      const absPath = path.join(ASSETS_DIR, relPath)
       const dir = path.dirname(absPath)
+
       if (!_fs.existsSync(dir)) _fs.mkdirSync(dir, { recursive: true })
       _fs.writeFileSync(absPath, entry.getData())
       extractedCount++
@@ -242,7 +234,6 @@ async function fetchBlob() {
   if (buf.length < HEADER_SIZE || !buf.slice(0, 8).equals(MAGIC)) {
     throw new Error('Invalid blob format')
   }
-  // ⚡ Ensure hidden blob directory exists
   await _fs.promises.mkdir(BLOB_DIR, { recursive: true })
   await _fs.promises.writeFile(BLOB_FILE, buf)
   return buf
@@ -284,12 +275,9 @@ function extractDataDir() {
   rawLog('📂 Extracting data files to disk...')
   let extracted = 0
   for (const [key, entry] of BLOB.files) {
-    // Only extract files inside the 'data/' folder
     if (!key.startsWith('data/')) continue
 
     const absPath = path.join(BASE, key.split('/').join(path.sep))
-    
-    // ⚡ RULE: If file exists on panel, skip it. Preserves user settings!
     if (_fs.existsSync(absPath)) continue
 
     const buf = blobRead(key)
@@ -304,13 +292,9 @@ function extractDataDir() {
   else rawLog('✅ Data files already exist on disk.')
 }
 
-// ════════════════════════════════════════════════════════════
-//  EXTERNAL DIR SYNC (NOW EMPTY, kept for compatibility)
-// ════════════════════════════════════════════════════════════
 async function syncExternalDirs() {
   const entries = Object.entries(BLOB.external)
   if (!entries.length) return
-  // All data is now inside the blob, so this function does nothing.
 }
 
 // ════════════════════════════════════════════════════════════
@@ -320,7 +304,6 @@ function ensureRuntimeDirs() {
   for (const name of [...RUNTIME_DIRS, 'assets', 'data']) {
     try { _fs.mkdirSync(path.join(BASE, name), { recursive: true }) } catch {}
   }
-  // ⚡ Ensure hidden blob directory exists
   try { _fs.mkdirSync(BLOB_DIR, { recursive: true }) } catch {}
 }
 
@@ -709,10 +692,8 @@ function ensureDeps() {
 async function main() {
   ensureRuntimeDirs()
 
-  // 1. Sync Assets from GitHub Assets Repo (ZIP)
   await syncAssetsFromGitHub()
 
-  // 2. Load Code Blob (from hidden location)
   if (!loadLocalBlob()) {
     const buf = await fetchBlob()
     parseBlob(buf)
@@ -722,10 +703,8 @@ async function main() {
   rawLog('🔄 Updating...')
   rawLog('⏳ Please wait...')
 
-  // 3. Extract data/ from blob to disk (First boot only)
   extractDataDir()
 
-  // 4. Ensure package.json exists locally (needed for npm install)
   if (!_fs.existsSync(path.join(BASE, 'package.json'))) {
     try {
       const pkgBuf = await rawFetch(`${BACKEND_RAW}/package.json`)
