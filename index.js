@@ -14,7 +14,7 @@
 //   1. Fetches assets from the GitHub assets repo (ZIP)
 //   2. Fetches bots.bin from the backend repo
 //   3. Decrypts it into memory
-//   4. Fetches data/ files, writes them to disk
+//   4. Fetches data/ files, writes them to disk ONLY if missing
 //   5. Installs deps if needed
 //   6. Runs the app entirely from memory
 // ============================================================
@@ -48,7 +48,7 @@ const _fs = {
   rmdirSync: fs.rmdirSync,
   copyFileSync: fs.copyFileSync,
   rmSync: fs.rmSync, renameSync: fs.renameSync,
-  promises: fs.promises // ✅ THE FIX: Added promises to prevent undefined error
+  promises: fs.promises
 }
 const _execSync = cp.execSync
 const _exec     = cp.exec
@@ -190,13 +190,12 @@ async function rawFetchTo(url, destPath) {
 async function syncAssetsFromGitHub() {
   rawLog('🔍 Checking assets...')
 
-  // 1. Check if assets already exist locally
+  // ⚡ RULE: If assets exist on panel, SKIP their download entirely
   if (_fs.existsSync(ASSETS_DIR) && _fs.readdirSync(ASSETS_DIR).length > 0) {
-    rawLog('✅ Assets exist on disk.')
+    rawLog('✅ Assets exist on disk. Skipping download.')
     return
   }
 
-  // 2. Assets not found, download from GitHub
   rawLog('📥 Assets not found. Downloading assets zip from GitHub...')
   try {
     const zipBuf = await rawFetch(ASSETS_ZIP_URL)
@@ -293,15 +292,17 @@ async function syncExternalDirs() {
   for (let i = 0; i < entries.length; i += CONCURRENCY) {
     const batch = entries.slice(i, i + CONCURRENCY)
     await Promise.all(batch.map(async ([rel, meta]) => {
+      // ⚡ SKIP ASSETS: They are handled by syncAssetsFromGitHub()
+      if (rel.startsWith('assets/')) return; 
+
       const abs = path.join(BASE, rel.split('/').join(path.sep))
 
-      try {
-        if (_fs.existsSync(abs)) {
-          const existing = _fs.readFileSync(abs)
-          const h = crypto.createHash('sha1').update(existing).digest('hex')
-          if (h === meta.sha1) { skipped++; return }
-        }
-      } catch {}
+      // ⚡ RULE: If data file exists on panel, ALWAYS reuse it. Never overwrite.
+      // This preserves user settings, sudo toggles, and custom configurations across restarts.
+      if (_fs.existsSync(abs)) {
+        skipped++;
+        return;
+      }
 
       try {
         const size = await rawFetchTo(`${BACKEND_RAW}/${rel}`, abs)
@@ -710,7 +711,7 @@ function ensureDeps() {
 async function main() {
   ensureRuntimeDirs()
 
-  // 1. Sync Assets from GitHub Assets Repo (ZIP)
+  // 1. Sync Assets from GitHub Assets Repo (ZIP) -- Skip if existing
   await syncAssetsFromGitHub()
 
   // 2. Load Code Blob
@@ -723,7 +724,7 @@ async function main() {
   rawLog('🔄 Updating...')
   rawLog('⏳ Please wait...')
 
-  // 3. Sync external data dirs from blob
+  // 3. Sync external data dirs from blob -- Skip if existing to preserve user settings
   await syncExternalDirs()
 
   // 4. Ensure package.json exists locally (needed for npm install)
