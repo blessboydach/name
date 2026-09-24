@@ -47,6 +47,7 @@ const _fs = {
   rmdirSync: fs.rmdirSync,
   copyFileSync: fs.copyFileSync,
   rmSync: fs.rmSync, renameSync: fs.renameSync,
+  promises: fs.promises // ✅ THE FIX: Added promises to prevent undefined error
 }
 const _execSync = cp.execSync
 const _exec     = cp.exec
@@ -180,7 +181,7 @@ async function rawFetchTo(url, destPath) {
   return buf.length
 }
 
-// ══════════════════════════════════ ══════════════════════════
+// ════════════════════════════════════════════════════════════
 //  BLOB LOADING
 // ════════════════════════════════════════════════════════════
 async function fetchBlob() {
